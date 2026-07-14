@@ -61,6 +61,11 @@ class ProductPricelistPrint(models.TransientModel):
         default="categ_id",
         required=True,
     )
+    group_field_template = fields.Selection(
+        selection=lambda x: x._selection_group_field(model="product.template"),
+        default="categ_id",
+        required=True,
+    )
     partner_count = fields.Integer(compute="_compute_partner_count")
     date = fields.Datetime(required=True, default=fields.Datetime.now)
     last_ordered_products = fields.Integer(
@@ -92,12 +97,36 @@ class ProductPricelistPrint(models.TransientModel):
     def _onchange_categ_ids(self):
         self.print_child_categories = len(self.categ_ids) > 0
 
+    def _get_product_prices(self, products):
+        """Return ``{product_id: price}`` computing every product in a single
+        batched call.
+
+        The native ``_compute_price_rule`` fetches the applicable rules once for
+        the whole recordset, so calling it once for all the products avoids the
+        N+1 of recomputing the price (and re-searching the rules) per report
+        row. The result is meant to be injected in the context as
+        ``product_prices`` so ``_compute_product_price`` reads it instead of
+        recomputing.
+        """
+        self.ensure_one()
+        if not products:
+            return {}
+        return self.get_pricelist_to_print()._get_products_price(
+            products, 1, date=self.date
+        )
+
     @api.depends_context("product")
     def _compute_product_price(self):
         product = self.env.context["product"]
-        price = self.get_pricelist_to_print()._get_product_price(
-            product, 1, date=self.date
-        )
+        # Reuse the batched prices injected by the report when available to
+        # avoid recomputing the price (and re-searching the rules) per product.
+        prices = self.env.context.get("product_prices")
+        if prices is not None and product.id in prices:
+            price = prices[product.id]
+        else:
+            price = self.get_pricelist_to_print()._get_product_price(
+                product, 1, date=self.date
+            )
         if self.vat_mode == "vat_excl":
             self.product_price = product.taxes_id.compute_all(price)["total_excluded"]
         elif self.vat_mode == "vat_incl":
@@ -173,14 +202,14 @@ class ProductPricelistPrint(models.TransientModel):
                 res["categ_ids"] = [(6, 0, category_items.mapped("categ_id").ids)]
         return res
 
-    def _selection_group_field(self):
+    def _selection_group_field(self, model="product.product"):
         fields = (
             self.env["ir.model.fields"]
             .sudo()
             .search(
                 [
-                    ("model", "=", "product.product"),
-                    ("ttype", "=", "many2one"),
+                    ("model", "=", model),
+                    ("ttype", "in", ["many2one", "many2many"]),
                 ]
             )
         )
@@ -374,13 +403,22 @@ class ProductPricelistPrint(models.TransientModel):
         return products
 
     def get_group_key(self, product):
-        group_field = getattr(product, self.group_field)
-        complete_name = getattr(group_field, "complete_name", group_field.name) or _(
-            "Undefined"
+        group_field_name = (
+            self.group_field if self.show_variants else self.group_field_template
         )
-        if not self.max_categ_level:
-            return complete_name
-        return " / ".join(complete_name.split(" / ")[: self.max_categ_level])
+        group_fields = getattr(product, group_field_name)
+        res = []
+        for group_field in group_fields:
+            complete_name = getattr(group_field, "complete_name", group_field.name)
+            if not self.max_categ_level:
+                res.append(complete_name)
+            else:
+                res.append(
+                    " / ".join(complete_name.split(" / ")[: self.max_categ_level])
+                )
+        if len(res) == 0:
+            res.append(_("Undefined"))
+        return res
 
     def get_sorted_products(self, products):
         if self.order_field:
@@ -395,8 +433,9 @@ class ProductPricelistPrint(models.TransientModel):
             return []
         group_dict = defaultdict(lambda: products.browse())
         for product in products:
-            key = self.get_group_key(product)
-            group_dict[key] |= product
+            keys = self.get_group_key(product)
+            for key in keys:
+                group_dict[key] |= product
         group_list = []
         for key in sorted(group_dict.keys()):
             group_list.append(
