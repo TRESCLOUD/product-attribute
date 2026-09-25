@@ -10,6 +10,11 @@ from odoo.addons.base.tests.common import BaseCommon
 
 
 class TestProductCostSecurity(BaseCommon):
+    # v20 corre los tests como usuario restringido, y `base.group_user` por sí solo
+    # no permite crear product.template. El `write` de abajo apunta a `cls.env.user`,
+    # que ya no es el usuario con el que corre el test.
+    _test_user_groups = BaseCommon._test_user_groups + ("base.group_system",)
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -25,6 +30,10 @@ class TestProductCostSecurity(BaseCommon):
         cls.product_cost_group_id = cls.env.ref(
             "product_cost_security.group_product_cost"
         ).id
+        # Crear product.template exige `product.group_product_manager` desde siempre
+        # (ir.access lo da solo a ese grupo, igual en 19 y en 20). En 19 el test lo
+        # ignoraba porque corría como superusuario; en 20 el usuario está restringido.
+        cls.product_manager_group_id = cls.env.ref("product.group_product_manager").id
         cls.product_template_model = cls.env["product.template"]
         cls.env.user.write(
             {"group_ids": [Command.set(cls.env.ref("base.group_system").ids)]}
@@ -43,7 +52,13 @@ class TestProductCostSecurity(BaseCommon):
 
     def test_with_access_to_product_costs_group(self):
         self.env.user.group_ids = [
-            Command.set([self.product_cost_group_id, self.base_group_user_id])
+            Command.set(
+                [
+                    self.product_cost_group_id,
+                    self.base_group_user_id,
+                    self.product_manager_group_id,
+                ]
+            )
         ]
         sheet_form = Form(self.product_template_model.with_user(self.env.user))
         sheet_form.name = "Test Product"
@@ -65,7 +80,13 @@ class TestProductCostSecurity(BaseCommon):
 
     def test_with_access_to_modify_product_costs_group(self):
         self.env.user.group_ids = [
-            Command.set([self.product_edit_cost_group_id, self.base_group_user_id])
+            Command.set(
+                [
+                    self.product_edit_cost_group_id,
+                    self.base_group_user_id,
+                    self.product_manager_group_id,
+                ]
+            )
         ]
         sheet_form = Form(self.product_template_model.with_user(self.env.user))
         sheet_form.name = "Test Product"

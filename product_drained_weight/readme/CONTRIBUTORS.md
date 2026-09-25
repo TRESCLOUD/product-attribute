@@ -1,4 +1,0 @@
-- [Tecnativa](https://www.tecnativa.com):
-  - Sergio Teruel
-- [Studio73](https://www.studio73.es/):
-  - Vicent Castells 

@@ -1,4 +1,0 @@
-- Sylvain LE GAL (<https://www.twitter.com/legalsylvain>)
-- Fabian Semal (<fabian@digital-serenity.net>)
-- [Heliconia Solutions Pvt. Ltd.](https://www.heliconia.io)
-  - Bhavesh Heliconia
